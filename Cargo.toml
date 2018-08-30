@@ -1,0 +1,12 @@
+[package]
+name = "perf-analyzer"
+version = "0.1.0"
+authors = ["Nathan <nlincoln@intellifarms.com>"]
+
+[dependencies]
+serde = "1.0"
+serde_yaml = "0.8"
+serde_derive = "1.0"
+url = "1.7"
+clap = "2.32"
+hyper = "0.12"

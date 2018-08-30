@@ -1,0 +1,25 @@
+config:
+  url: http://localhost/api/market/v1/facilities/optimized
+  headers:
+    Authorization: Bearer NLINCOLN-AUTH-TOKEN
+  query:
+    commodityInput: 6.01
+    radius:
+      - 100
+      - 200
+      - 400
+      - 800
+    locationId:
+      - 507
+      - 1014
+
+experiments:
+  by-fdm-crop:
+    query:
+      commodityId: 4
+
+  by-geograin-commodity:
+    query:
+      fdm_crop_id:
+        - 1
+        - 6
