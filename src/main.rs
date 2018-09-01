@@ -8,8 +8,6 @@ use clap::{App, Arg};
 use serde_yaml::Value;
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::Read;
-use std::net::TcpStream;
 use std::path::Path;
 use std::rc::Rc;
 use std::time::Duration;
@@ -40,7 +38,7 @@ impl Trial {
             }
 
             fn next(&mut self, values: &HashMap<String, Vec<String>>) {
-                if (self.is_done(values)) {
+                if self.is_done(values) {
                     self.index = 0;
                 } else {
                     self.index += 1;
@@ -103,8 +101,7 @@ impl Trial {
     }
 
     pub fn execute(&self) -> TrialResult {
-        use hyper::header::{HeaderMap, HeaderName, HeaderValue};
-        use hyper::{rt::Future, Body, Client, Request, Uri};
+        use hyper::{rt::Future, Body, Client, Request};
         use std::time::Instant;
         let mut req = Request::get(self.url().clone().into_string());
         for (key, value) in self.headers() {
@@ -113,8 +110,17 @@ impl Trial {
         let client = Client::new();
 
         let start = Instant::now();
-        let future = client.request(req.body(Body::empty()).unwrap());
-        let response = future.wait();
+        let future = client
+            .request(req.body(Body::empty()).unwrap())
+            .map(|_| {
+                println!("Successfully ran future");
+            })
+            .map_err(|err| {
+                eprintln!("Error {}", err);
+            });
+
+        hyper::rt::run(future);
+
         TrialResult {
             trial: self.clone(),
             duration: Instant::now() - start,
@@ -122,7 +128,7 @@ impl Trial {
     }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 struct TrialResult {
     trial: Trial,
     duration: Duration,
@@ -275,5 +281,10 @@ fn main() {
         .iter()
         .map(|experiment| Trial::gen_from_experiment(experiment.clone()))
         .collect();
-    println!("{:?}", trials);
+    for trials in trials {
+        for trial in trials {
+            let result: TrialResult = trial.execute();
+            println!("{:?}", result);
+        }
+    }
 }
