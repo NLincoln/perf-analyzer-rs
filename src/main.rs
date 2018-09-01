@@ -20,7 +20,7 @@ fn load_config(path: &Path) -> Value {
         .expect("Invalid Yaml");
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 struct Trial {
     experiment: Rc<Experiment>,
     query: HashMap<String, String>,
@@ -28,10 +28,63 @@ struct Trial {
 
 impl Trial {
     pub fn gen_from_experiment(experiment: Rc<Experiment>) -> Vec<Trial> {
-        /**
-         * Iterate over each possible query param in the experiment
-         */
-        fn recurse(name: String, values: Vec<String>) -> HashMap<String, String> {}
+        let mut queries: Vec<HashMap<String, String>> = Vec::new();
+        struct QueryIterator {
+            key: String,
+            index: usize,
+        }
+
+        impl QueryIterator {
+            fn is_done(&self, values: &HashMap<String, Vec<String>>) -> bool {
+                return values[&self.key].len() - 1 == self.index;
+            }
+
+            fn next(&mut self, values: &HashMap<String, Vec<String>>) {
+                if (self.is_done(values)) {
+                    self.index = 0;
+                } else {
+                    self.index += 1;
+                }
+            }
+        }
+
+        fn is_done(iterators: &Vec<QueryIterator>, values: &HashMap<String, Vec<String>>) -> bool {
+            for it in iterators {
+                if !it.is_done(values) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        let mut iterators: Vec<QueryIterator> = Vec::new();
+        for key in experiment.query.keys() {
+            iterators.push(QueryIterator {
+                key: key.clone(),
+                index: 0,
+            });
+        }
+
+        let values = &experiment.query;
+
+        while !is_done(&iterators, &values) {
+            let mut query_map: HashMap<String, String> = HashMap::new();
+            for it in iterators.iter() {
+                query_map.insert(it.key.clone(), values[&it.key][it.index].clone());
+            }
+            queries.push(query_map);
+            for it in iterators.iter_mut() {
+                it.next(values);
+            }
+        }
+
+        return queries
+            .into_iter()
+            .map(|query| Trial {
+                experiment: experiment.clone(),
+                query,
+            })
+            .collect();
     }
 
     pub fn name(&self) -> &String {
@@ -218,6 +271,9 @@ fn main() {
 
     let config = load_config(&Path::new(matches.value_of("EXPERIMENT").unwrap()));
     let experiments = Experiment::from_config(config);
-
-    println!("{:?}", experiments);
+    let trials: Vec<Vec<Trial>> = experiments
+        .iter()
+        .map(|experiment| Trial::gen_from_experiment(experiment.clone()))
+        .collect();
+    println!("{:?}", trials);
 }
