@@ -53,8 +53,8 @@ fn main() {
         .collect();
     for trials in trials {
         for trial in trials {
-            let result: TrialResult = trial.execute();
-            println!("{:?}", result);
+            println!("Executing {}", trial);
+            let result = trial.execute();
         }
     }
 }

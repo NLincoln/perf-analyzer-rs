@@ -10,6 +10,18 @@ struct Config {
   headers: HashMap<String, String>,
   query: HashMap<String, Vec<String>>,
   branches: Option<Vec<String>>,
+  samples: u64,
+  warmup: u64,
+}
+
+fn get_number(config: &serde_yaml::Mapping, key: &str, default: u64) -> u64 {
+  config
+    .get(&Value::String(String::from(key)))
+    .map_or(default, |samples| {
+      samples
+        .as_u64()
+        .expect("The number of samples must be a number")
+    })
 }
 
 impl Config {
@@ -21,6 +33,8 @@ impl Config {
       branches: None,
       query: process_query_params(config.get(&Value::String(String::from("query")))),
       headers: process_headers(config.get(&Value::String(String::from("headers")))),
+      samples: get_number(&config, "samples", 25),
+      warmup: get_number(&config, "warmup", 10),
     }
   }
 }
@@ -32,6 +46,9 @@ pub struct Experiment {
   query: HashMap<String, Vec<String>>,
   headers: HashMap<String, String>,
   url: Url,
+
+  samples: u64,
+  warmup: u64,
 }
 fn array_of_opt_to_opt_array<T>(vec: Vec<Option<T>>) -> Option<Vec<T>> {
   let mut result = Vec::new();
@@ -55,8 +72,6 @@ impl Experiment {
           .expect("root config key must be a mapping"),
       )
     });
-
-    println!("{:?}", root_config);
 
     return config
       .get("experiments")
@@ -112,6 +127,8 @@ impl Experiment {
       query,
       headers,
       url,
+      samples: get_number(&contents, "samples", 25),
+      warmup: get_number(&contents, "warmup", 10),
     }
   }
 
@@ -129,6 +146,13 @@ impl Experiment {
 
   pub fn url(&self) -> &Url {
     &self.url
+  }
+
+  pub fn samples(&self) -> u64 {
+    self.samples
+  }
+  pub fn warmup(&self) -> u64 {
+    self.warmup
   }
 }
 

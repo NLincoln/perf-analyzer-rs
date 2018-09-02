@@ -1,5 +1,7 @@
 config:
   url: http://localhost/api/market/v1/facilities/optimized
+  samples: 25
+  warmup: 10
   headers:
     Authorization: Bearer NLINCOLN-AUTH-TOKEN
   query:

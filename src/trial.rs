@@ -88,7 +88,7 @@ impl Trial {
     return url;
   }
 
-  pub fn execute(&self) -> TrialResult {
+  fn execute_once(&self) -> TrialResult {
     use hyper::{rt::Future, Body, Client, Request};
     use std::time::Instant;
     let mut req = Request::get(self.url().clone().into_string());
@@ -100,24 +100,52 @@ impl Trial {
     let start = Instant::now();
     let future = client
       .request(req.body(Body::empty()).unwrap())
-      .map(|_| {
-        println!("Successfully ran future");
-      })
+      .map(|_| {})
       .map_err(|err| {
         eprintln!("Error {}", err);
       });
 
     hyper::rt::run(future);
 
-    TrialResult {
-      trial: self.clone(),
-      duration: Instant::now() - start,
-    }
+    let duration = Instant::now() - start;
+
+    eprintln!("Time: {:?}", duration);
+
+    TrialResult { duration }
   }
+
+  pub fn execute(&self) -> TrialResultSet {
+    let mut result_set = TrialResultSet {
+      trial: self.clone(),
+      results: Vec::new(),
+    };
+    for _ in 0..self.experiment.warmup() {
+      self.execute_once();
+    }
+    for _ in 0..self.experiment.samples() {
+      let result = self.execute_once();
+      result_set.results.push(result);
+    }
+
+    return result_set;
+  }
+}
+
+use std::fmt;
+
+impl fmt::Display for Trial {
+  fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    write!(f, "Trial {} on URL {}", self.name(), self.url())
+  }
+}
+
+#[derive(Debug)]
+pub struct TrialResultSet {
+  trial: Trial,
+  results: Vec<TrialResult>,
 }
 
 #[derive(Debug, Clone)]
 pub struct TrialResult {
-  trial: Trial,
   duration: std::time::Duration,
 }
