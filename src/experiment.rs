@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::rc::Rc;
 use url::Url;
 
+#[derive(Debug, Clone)]
 struct Config {
   url: Option<Url>,
   headers: HashMap<String, String>,
@@ -12,8 +13,15 @@ struct Config {
 }
 
 impl Config {
-  pub fn create(config: &Value) -> Config {
-    unimplemented!();
+  pub fn create(config: &serde_yaml::Mapping) -> Config {
+    Config {
+      url: config
+        .get(&Value::String(String::from("url")))
+        .map(|url| Url::parse(url.as_str().expect("Url must be a string")).expect("Invalid URL")),
+      branches: None,
+      query: process_query_params(config.get(&Value::String(String::from("query")))),
+      headers: process_headers(config.get(&Value::String(String::from("headers")))),
+    }
   }
 }
 
@@ -40,6 +48,16 @@ fn array_of_opt_to_opt_array<T>(vec: Vec<Option<T>>) -> Option<Vec<T>> {
 
 impl Experiment {
   pub fn from_config(config: Value) -> Vec<Rc<Experiment>> {
+    let root_config: Option<Config> = config.get("config").map(|config| {
+      Config::create(
+        config
+          .as_mapping()
+          .expect("root config key must be a mapping"),
+      )
+    });
+
+    println!("{:?}", root_config);
+
     return config
       .get("experiments")
       .expect("Root experiments: key is required")
@@ -52,81 +70,48 @@ impl Experiment {
           value
             .as_mapping()
             .expect("Each experiment must be a mapping"),
+          &root_config,
         ))
       })
       .collect();
   }
 
-  fn yaml_primitive_to_string(value: &Value) -> Option<String> {
-    match value {
-      Value::Number(number) => Some(format!("{}", number)),
-      Value::String(string) => Some(string.clone()),
-      _ => None,
-    }
-  }
-
-  fn yaml_value_to_array(value: &Value) -> Option<Vec<String>> {
-    match value {
-      Value::Sequence(seq) => array_of_opt_to_opt_array(
-        seq
-          .iter()
-          .map(|value| Self::yaml_primitive_to_string(value))
-          .collect(),
-      ),
-      Value::String(string) => Some(vec![string.clone()]),
-      Value::Number(num) => Some(vec![format!("{}", num)]),
-      _ => None,
-    }
-  }
-
-  fn process_query_params(query: Option<&Value>) -> HashMap<String, Vec<String>> {
-    if let Some(query) = query {
-      let query = query.as_mapping().expect("Query Params must be a mapping");
-      let mut map: HashMap<String, Vec<String>> = HashMap::new();
-      for (key, value) in query.iter() {
-        map.insert(
-          Self::yaml_primitive_to_string(key).expect("Keys for the query params must be strings"),
-          Self::yaml_value_to_array(value).expect("Failed to parse query param list."),
-        );
+  fn from_experiment_key(
+    name: &str,
+    contents: &serde_yaml::Mapping,
+    config: &Option<Config>,
+  ) -> Experiment {
+    let url = contents.get(&Value::String(String::from("url")));
+    let url = match url {
+      Some(url) => {
+        Url::parse(url.as_str().expect("Url must be a string")).expect("url must be a valid url")
       }
-      map
-    } else {
-      HashMap::new()
-    }
-  }
+      None => match config.clone().and_then(|config| config.url) {
+        Some(url) => url,
+        None => panic!("Url is required"),
+      },
+    };
 
-  fn process_headers(headers: Option<&Value>) -> HashMap<String, String> {
-    if let Some(headers) = headers {
-      let headers = headers
-        .as_mapping()
-        .expect("Headers must be a mapping of strings to strings");
-      let mut map: HashMap<String, String> = HashMap::new();
-      for (key, value) in headers.iter() {
-        map.insert(
-          Self::yaml_primitive_to_string(key).expect("Keys for the headers must be strings"),
-          Self::yaml_primitive_to_string(value)
-            .expect("Each value for each header must be a string"),
-        );
-      }
-      map
-    } else {
-      HashMap::new()
-    }
-  }
+    let mut query = process_query_params(contents.get(&Value::String(String::from("query"))));
 
-  fn from_experiment_key(name: &str, contents: &serde_yaml::Mapping) -> Experiment {
+    match config {
+      Some(config) => query.extend(config.clone().query),
+      None => {}
+    };
+
+    let mut headers = process_headers(contents.get(&Value::String(String::from("headers"))));
+
+    match config {
+      Some(config) => headers.extend(config.clone().headers),
+      None => {}
+    }
+
     Experiment {
       name: String::from(name),
       branches: None,
-      query: Self::process_query_params(contents.get(&Value::String(String::from("query")))),
-      headers: Self::process_headers(contents.get(&Value::String(String::from("headers")))),
-      url: Url::parse(
-        contents
-          .get(&Value::String(String::from("url")))
-          .expect("Url required")
-          .as_str()
-          .expect("Url must be a string"),
-      ).expect("Url argument must be a valid URL"),
+      query,
+      headers,
+      url,
     }
   }
 
@@ -144,5 +129,61 @@ impl Experiment {
 
   pub fn url(&self) -> &Url {
     &self.url
+  }
+}
+
+fn yaml_primitive_to_string(value: &Value) -> Option<String> {
+  match value {
+    Value::Number(number) => Some(format!("{}", number)),
+    Value::String(string) => Some(string.clone()),
+    _ => None,
+  }
+}
+
+fn yaml_value_to_array(value: &Value) -> Option<Vec<String>> {
+  match value {
+    Value::Sequence(seq) => array_of_opt_to_opt_array(
+      seq
+        .iter()
+        .map(|value| yaml_primitive_to_string(value))
+        .collect(),
+    ),
+    Value::String(string) => Some(vec![string.clone()]),
+    Value::Number(num) => Some(vec![format!("{}", num)]),
+    _ => None,
+  }
+}
+
+fn process_query_params(query: Option<&Value>) -> HashMap<String, Vec<String>> {
+  if let Some(query) = query {
+    let query = query.as_mapping().expect("Query Params must be a mapping");
+    let mut map: HashMap<String, Vec<String>> = HashMap::new();
+    for (key, value) in query.iter() {
+      map.insert(
+        yaml_primitive_to_string(key).expect("Keys for the query params must be strings"),
+        yaml_value_to_array(value).expect("Failed to parse query param list."),
+      );
+    }
+    map
+  } else {
+    HashMap::new()
+  }
+}
+
+fn process_headers(headers: Option<&Value>) -> HashMap<String, String> {
+  if let Some(headers) = headers {
+    let headers = headers
+      .as_mapping()
+      .expect("Headers must be a mapping of strings to strings");
+    let mut map: HashMap<String, String> = HashMap::new();
+    for (key, value) in headers.iter() {
+      map.insert(
+        yaml_primitive_to_string(key).expect("Keys for the headers must be strings"),
+        yaml_primitive_to_string(value).expect("Each value for each header must be a string"),
+      );
+    }
+    map
+  } else {
+    HashMap::new()
   }
 }
