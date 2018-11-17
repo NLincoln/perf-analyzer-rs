@@ -9,11 +9,7 @@ serde_yaml = "0.8"
 serde_derive = "1.0"
 url = "1.7"
 clap = "2.32"
-hyper = "0.12"
-
-[dev-dependencies]
-criterion = "0.2"
-
-[[bench]]
-name = "gen_trials"
-harness = false
+reqwest = "0.9"
+statistical = "0.1"
+termion = "1.5"
+lazy_static = "1.2"

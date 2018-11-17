@@ -1,26 +1,26 @@
 extern crate clap;
-extern crate hyper;
+#[macro_use]
+extern crate lazy_static;
+extern crate reqwest;
 extern crate serde;
 extern crate serde_yaml;
+extern crate statistical;
+extern crate termion;
 extern crate url;
 #[macro_use]
 extern crate serde_derive;
 use clap::{App, Arg};
-use serde_yaml::Value;
-use std::fs::File;
-use std::path::Path;
+use std::{fs::File, path::Path, rc::Rc};
 
-use self::experiment::Experiment;
 use self::trial::Trial;
-fn load_config(path: &Path) -> Value {
+fn load_config(path: &Path) -> self::config::RootConfig {
     return serde_yaml::from_reader(&mut File::open(&path).expect("Failed to open file"))
         .expect("Invalid Yaml");
 }
 
-mod experiment;
+mod config;
+mod distributions;
 mod trial;
-use experiment::*;
-use trial::*;
 
 fn main() {
     let matches = App::new("Perf Analyzer")
@@ -47,15 +47,36 @@ fn main() {
         .get_matches();
 
     let config = load_config(&Path::new(matches.value_of("EXPERIMENT").unwrap()));
-    let experiments = Experiment::from_config(config);
-    let trials: Vec<Vec<Trial>> = experiments
-        .iter()
-        .map(|experiment| Trial::gen_from_experiment(experiment.clone()))
-        .collect();
-    for trials in trials {
-        for trial in trials {
-            println!("Executing {}", trial);
-            let result = trial.execute();
-        }
+    let trials: Vec<Rc<Trial>> = From::from(config);
+    for trial in trials {
+        println!("Executing {}", trial);
+        let result: self::trial::TrialResultSet = trial.execute();
+        let durations: Vec<_> = result
+            .results
+            .iter()
+            .map(|result| {
+                let millis = result.duration.subsec_millis();
+                let secs = result.duration.as_secs();
+                (secs * 1000 + millis as u64) as f64
+            })
+            .collect();
+        let mean = statistical::mean(&durations);
+        let stddev = statistical::standard_deviation(&durations, Some(mean));
+        println!("Mean: {}ms", mean);
+        let n = durations.len();
+        let alpha = 0.025; // a 5% confidence interval.
+        let dof = n - 1;
+        let t = distributions::lookup_value(dof as u16, alpha);
+        let err = t * stddev / (n as f64).sqrt();
+        let round = |val: f64| {
+            let val = val * 1000.0;
+            let val = val.round();
+            val / 1000.0
+        };
+        println!(
+            "95% CI: ({}ms - {}ms)",
+            round(mean - err),
+            round(mean + err)
+        );
     }
 }

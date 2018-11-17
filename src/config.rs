@@ -1,36 +1,113 @@
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
-#[derive(Debug, Clone, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Deserialize, PartialEq, PartialOrd, Ord, Eq)]
 #[serde(untagged)]
-pub enum QueryEntry {
+pub enum ParamEntry {
   String(String),
   Integer(i64),
+  Boolean(bool),
 }
 
-#[derive(Debug, Clone, Deserialize, PartialEq)]
+impl ToString for ParamEntry {
+  fn to_string(&self) -> String {
+    use self::ParamEntry::*;
+    match self {
+      String(val) => val.clone(),
+      Integer(val) => val.to_string(),
+      Boolean(val) => match val {
+        true => "true".into(),
+        false => "false".into(),
+      },
+    }
+  }
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq, PartialOrd, Ord, Eq)]
 #[serde(untagged)]
-pub enum QueryValue {
-  Value(QueryEntry),
-  List(Vec<QueryEntry>),
+pub enum ParamValue {
+  Value(ParamEntry),
+  List(Vec<ParamEntry>),
 }
 
-#[derive(Debug, Clone, Deserialize, PartialEq)]
+pub fn cross<K: Clone + Ord, V: Clone>(map: BTreeMap<K, Vec<V>>) -> Vec<BTreeMap<K, V>> {
+  let mut result: Vec<BTreeMap<K, V>> = vec![];
+  for (key, value) in map.into_iter() {
+    if result.is_empty() {
+      for item in value {
+        let mut map = BTreeMap::new();
+        map.insert(key.clone(), item);
+        result.push(map);
+      }
+    } else {
+      let mut next_result = vec![];
+      for item in value {
+        let mut result_copy = result.clone();
+        for entry in result_copy.iter_mut() {
+          entry.insert(key.clone(), item.clone());
+        }
+        next_result.append(&mut result_copy);
+      }
+      result = next_result;
+    }
+  }
+
+  result
+}
+
+impl ParamValue {
+  /// Transform a BTreeMap of Values into a list of key-value pairs
+  /// So for example, the following yaml:
+  /// ```yaml
+  /// a:
+  ///   - 1
+  ///   - 2
+  /// b:
+  ///   - 3
+  ///   - 4
+  /// ```
+  /// Would be transformed into the following:
+  /// ```json
+  /// [
+  ///   { a: "1", b: "3" },
+  ///   { a: "1", b: "4" },
+  ///   { a: "2", b: "3" },
+  ///   { a: "2", b: "4" },
+  /// ]
+  /// ```
+  pub fn flatten(map: BTreeMap<String, ParamValue>) -> Vec<BTreeMap<String, String>> {
+    cross(
+      map
+        .into_iter()
+        .map(|(key, value)| (key, value.into_normalized()))
+        .collect(),
+    )
+  }
+  fn into_normalized(self) -> Vec<String> {
+    match self {
+      ParamValue::List(items) => items.iter().map(ToString::to_string).collect(),
+      ParamValue::Value(val) => vec![val.to_string()],
+    }
+  }
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq, PartialOrd, Ord, Eq)]
 pub struct Experiment {
-  url: Option<String>,
-  headers: Option<HashMap<String, String>>,
-  query: Option<HashMap<String, QueryValue>>,
+  pub url: Option<String>,
+  pub headers: Option<BTreeMap<String, String>>,
+  pub query: Option<BTreeMap<String, ParamValue>>,
+  pub params: Option<BTreeMap<String, ParamValue>>,
 }
 
-#[derive(Debug, Clone, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Deserialize, PartialEq, PartialOrd, Ord, Eq)]
 pub struct BaseConfig {
-  url: Option<String>,
-  headers: Option<HashMap<String, String>>,
-  query: Option<HashMap<String, QueryValue>>,
+  pub url: Option<String>,
+  pub headers: Option<BTreeMap<String, String>>,
+  pub warmup: Option<u32>,
 }
 
-#[derive(Debug, Clone, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Deserialize, PartialEq, PartialOrd, Ord, Eq)]
 pub struct RootConfig {
-  pub experiments: HashMap<String, Experiment>,
+  pub experiments: BTreeMap<String, Experiment>,
   pub config: Option<BaseConfig>,
 }
 
@@ -38,8 +115,30 @@ pub struct RootConfig {
 mod tests {
   use super::*;
   use serde_yaml::from_str;
-  use std::collections::HashMap;
+  use std::collections::BTreeMap;
   use std::iter::FromIterator;
+
+  #[test]
+  fn test_flatten() {
+    assert_eq!(
+      ParamValue::flatten(BTreeMap::from_iter(vec![
+        (
+          "a".into(),
+          ParamValue::List(vec![ParamEntry::Integer(1), ParamEntry::Integer(2)])
+        ),
+        (
+          "b".into(),
+          ParamValue::List(vec![ParamEntry::Integer(3), ParamEntry::Integer(4)])
+        )
+      ])),
+      vec![
+        BTreeMap::from_iter(vec![("a".into(), "1".into()), ("b".into(), "3".into())]),
+        BTreeMap::from_iter(vec![("a".into(), "2".into()), ("b".into(), "3".into())]),
+        BTreeMap::from_iter(vec![("a".into(), "1".into()), ("b".into(), "4".into())]),
+        BTreeMap::from_iter(vec![("a".into(), "2".into()), ("b".into(), "4".into())]),
+      ]
+    )
+  }
 
   fn parse(text: &str) -> RootConfig {
     from_str(text).expect("Failed to parse assumed-valid input")
@@ -65,28 +164,29 @@ experiments:
       ),
       RootConfig {
         config: None,
-        experiments: HashMap::from_iter(vec![(
+        experiments: BTreeMap::from_iter(vec![(
           "sample".into(),
           Experiment {
             url: Some("http://localhost".into()),
-            headers: Some(HashMap::from_iter(vec![(
+            headers: Some(BTreeMap::from_iter(vec![(
               "Auth".into(),
               "Bearer foo".into()
             )])),
-            query: Some(HashMap::from_iter(vec![
+            params: None,
+            query: Some(BTreeMap::from_iter(vec![
               (
                 "user_id".into(),
-                QueryValue::Value(QueryEntry::String("barbaz".into()))
+                ParamValue::Value(ParamEntry::String("barbaz".into()))
               ),
               (
                 "other_thing".into(),
-                QueryValue::Value(QueryEntry::Integer(55))
+                ParamValue::Value(ParamEntry::Integer(55))
               ),
               (
                 "account_id".into(),
-                QueryValue::List(vec![
-                  QueryEntry::String("foobar".into()),
-                  QueryEntry::Integer(6)
+                ParamValue::List(vec![
+                  ParamEntry::String("foobar".into()),
+                  ParamEntry::Integer(6)
                 ])
               )
             ]))
@@ -106,7 +206,7 @@ experiments: {}
       ),
       RootConfig {
         config: None,
-        experiments: HashMap::new()
+        experiments: BTreeMap::new()
       }
     )
   }
