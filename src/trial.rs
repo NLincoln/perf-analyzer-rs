@@ -91,7 +91,7 @@ impl Trial {
       self.execute_once();
     }
     // TODO :: Dynamically calculate # of needed samples
-    for _ in 0..25 {
+    for _ in 0..self.samples {
       let result = self.execute_once();
       result_set.results.push(result);
     }
