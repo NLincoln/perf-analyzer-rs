@@ -64,9 +64,15 @@ fn main() {
         let stddev = statistical::standard_deviation(&durations, Some(mean));
         println!("Mean: {}ms", mean);
         let n = durations.len();
-        let alpha = 0.025; // a 5% confidence interval.
+        // Alpha represents our confidence in the results.
+        // Here we have a 95% confidence level. This means
+        // we take the 0.5 and divide it by 2 to get 0.025
+        let alpha = 0.025;
+        // Degrees of freedom is always number of samples - 1
         let dof = n - 1;
+        // Look up the value in a t-table. This is more or less magic.
         let t = distributions::lookup_value(dof as u16, alpha);
+        // Calculate the error
         let err = t * stddev / (n as f64).sqrt();
         let round = |val: f64| {
             let val = val * 1000.0;
