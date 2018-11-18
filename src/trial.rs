@@ -1,4 +1,4 @@
-use crate::config;
+use crate::{config, distributions};
 use std;
 use std::collections::BTreeMap;
 use std::rc::Rc;
@@ -123,4 +123,74 @@ pub struct TrialResultSet {
 pub struct TrialResult {
   pub duration: std::time::Duration,
   pub status_code: reqwest::StatusCode,
+}
+
+pub struct TrialAnalysis {
+  pub result_set: TrialResultSet,
+  pub stddev: f64,
+  pub mean: f64,
+  pub confidence_interval: (f64, f64),
+}
+
+impl From<TrialResultSet> for TrialAnalysis {
+  fn from(set: TrialResultSet) -> TrialAnalysis {
+    let durations: Vec<_> = set
+      .results
+      .iter()
+      .map(|result| {
+        let millis = result.duration.subsec_millis();
+        let secs = result.duration.as_secs();
+        (secs * 1000 + millis as u64) as f64
+      })
+      .collect();
+    let mean = statistical::mean(&durations);
+    let stddev = statistical::standard_deviation(&durations, Some(mean));
+    let n = durations.len();
+    // Alpha represents our confidence in the results.
+    // Here we have a 95% confidence level. This means
+    // we take the 0.5 and divide it by 2 to get 0.025
+    let alpha = 0.025;
+    // Degrees of freedom is always number of samples - 1
+    let dof = n - 1;
+    // Look up the value in a t-table. This is more or less magic.
+    let t = distributions::lookup_value(dof as u32, alpha);
+    // Calculate the error
+    let err = t * stddev / (n as f64).sqrt();
+    TrialAnalysis {
+      result_set: set,
+      stddev,
+      mean,
+      confidence_interval: (mean - err, mean + err),
+    }
+  }
+}
+
+impl TrialAnalysis {
+  pub fn is_statistically_equivalent_to(&self, other: &TrialAnalysis) -> bool {
+    // Sp is the variance of both of our datasets
+    let n1 = self.result_set.results.len() as f64;
+    let n2 = other.result_set.results.len() as f64;
+    let s1_2 = self.stddev.powi(2);
+    let s2_2 = other.stddev.powi(2);
+
+    let s1_over_n1 = s1_2 / n1;
+    let s2_over_n2 = s2_2 / n2;
+
+    let normed_variances = s1_over_n1 + s2_over_n2;
+
+    let sp = (((n1 - 1.) * s1_2 + (n2 - 1.) as f64 * s2_2) / (n1 + n2 - 2.)).sqrt();
+
+    // Our test statistic. We use this for determining whether the change is significant
+    let t0 = (self.mean - other.mean) / (sp * normed_variances.sqrt());
+
+    let dof = normed_variances.powi(2)
+      / ((s1_over_n1).powi(2) / (n1 - 1.) + s2_over_n2.powi(2) / (n2 - 1.));
+    // Our DOF should be an integer. If it's not, we round down
+    // dof should also never be negative if we did the above correctly.
+    assert!(dof > 0.);
+    let dof = dof as u32;
+    let t = distributions::lookup_value(dof, 0.025);
+
+    t0.abs() < t
+  }
 }

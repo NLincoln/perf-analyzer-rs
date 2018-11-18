@@ -9,7 +9,7 @@ lazy_static! {
   static ref PARSED_DATA: Data = { serde_yaml::from_str(include_str!("t-table.yaml")).unwrap() };
 }
 
-fn key_for_dof(dof: u16) -> String {
+fn key_for_dof(dof: u32) -> String {
   if dof <= 30 {
     return dof.to_string();
   }
@@ -65,7 +65,7 @@ fn index_for_alpha(alpha: f64) -> usize {
   panic!("No t-table data available for alpha {}", alpha);
 }
 
-pub fn lookup_value(dof: u16, alpha: f64) -> f64 {
+pub fn lookup_value(dof: u32, alpha: f64) -> f64 {
   let key = key_for_dof(dof);
   let index = index_for_alpha(alpha);
   return PARSED_DATA[&key][index];

@@ -14,8 +14,8 @@ use std::{fs::File, path::Path, rc::Rc};
 
 use self::trial::Trial;
 fn load_config(path: &Path) -> self::config::RootConfig {
-    return serde_yaml::from_reader(&mut File::open(&path).expect("Failed to open file"))
-        .expect("Invalid Yaml");
+  return serde_yaml::from_reader(&mut File::open(&path).expect("Failed to open file"))
+    .expect("Invalid Yaml");
 }
 
 mod config;
@@ -23,66 +23,68 @@ mod distributions;
 mod trial;
 
 fn main() {
-    let matches = App::new("Perf Analyzer")
-        .version("0.1.0")
-        .author("Nathan Lincoln <nlincoln@intellifarms.com>")
-        .about("Measure your webapps performance")
-        .arg(
-            Arg::with_name("EXPERIMENT")
-                .required(true)
-                .help("The config file of the experiment"),
-        )
-        .arg(
-            Arg::with_name("baseline")
-                .long("baseline")
-                .takes_value(true)
-                .default_value("master"),
-        )
-        .arg(
-            Arg::with_name("compare")
-                .short("c")
-                .long("compare")
-                .takes_value(true),
-        )
-        .get_matches();
+  let matches = App::new("Perf Analyzer")
+    .version("0.1.0")
+    .author("Nathan Lincoln <nlincoln@intellifarms.com>")
+    .about("Measure your webapps performance")
+    .arg(
+      Arg::with_name("EXPERIMENT")
+        .required(true)
+        .help("The config file of the experiment"),
+    )
+    .arg(
+      Arg::with_name("baseline")
+        .long("baseline")
+        .takes_value(true)
+        .default_value("master"),
+    )
+    .arg(
+      Arg::with_name("compare")
+        .short("c")
+        .long("compare")
+        .takes_value(true),
+    )
+    .get_matches();
 
-    let config = load_config(&Path::new(matches.value_of("EXPERIMENT").unwrap()));
-    let trials: Vec<Rc<Trial>> = From::from(config);
-    for trial in trials {
-        println!("Executing {}", trial);
-        let result: self::trial::TrialResultSet = trial.execute();
-        let durations: Vec<_> = result
-            .results
-            .iter()
-            .map(|result| {
-                let millis = result.duration.subsec_millis();
-                let secs = result.duration.as_secs();
-                (secs * 1000 + millis as u64) as f64
-            })
-            .collect();
-        let mean = statistical::mean(&durations);
-        let stddev = statistical::standard_deviation(&durations, Some(mean));
-        println!("Mean: {}ms", mean);
-        let n = durations.len();
-        // Alpha represents our confidence in the results.
-        // Here we have a 95% confidence level. This means
-        // we take the 0.5 and divide it by 2 to get 0.025
-        let alpha = 0.025;
-        // Degrees of freedom is always number of samples - 1
-        let dof = n - 1;
-        // Look up the value in a t-table. This is more or less magic.
-        let t = distributions::lookup_value(dof as u16, alpha);
-        // Calculate the error
-        let err = t * stddev / (n as f64).sqrt();
-        let round = |val: f64| {
-            let val = val * 1000.0;
-            let val = val.round();
-            val / 1000.0
-        };
+  let config = load_config(&Path::new(matches.value_of("EXPERIMENT").unwrap()));
+  let trials: Vec<Rc<Trial>> = From::from(config);
+  let mut analyses: Vec<trial::TrialAnalysis> = vec![];
+
+  for trial in trials {
+    println!("Executing {}", trial);
+    let result: self::trial::TrialResultSet = trial.execute();
+    let analysis = trial::TrialAnalysis::from(result);
+
+    let round = |val: f64| {
+      let val = val * 1000.0;
+      let val = val.round();
+      val / 1000.0
+    };
+    println!("Mean {}ms", analysis.mean);
+    println!(
+      "95% CI: ({}ms - {}ms)",
+      round(analysis.confidence_interval.0),
+      round(analysis.confidence_interval.1)
+    );
+    analyses.push(analysis);
+  }
+  println!("=> Comparing trials against each other");
+
+  for i in 0..analyses.len() {
+    for j in 0..analyses.len() {
+      if i == j {
+        continue;
+      }
+      let a = &analyses[i];
+      let b = &analyses[j];
+      if a.is_statistically_equivalent_to(b) {
         println!(
-            "95% CI: ({}ms - {}ms)",
-            round(mean - err),
-            round(mean + err)
+          "No significant difference was found between trials {} and {}",
+          a.result_set.trial, b.result_set.trial
         );
+        println!("This usually means you can remove some parameters from the config file");
+        println!("");
+      }
     }
+  }
 }
